@@ -1,0 +1,37 @@
+# requirements.txt
+
+# Web scraping
+selenium==4.15.0
+beautifulsoup4==4.12.2
+requests==2.31.0
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.12.1
+
+# Task queue
+celery==5.3.4
+redis==5.0.1
+
+# Web API
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Utilities
+python-dotenv==1.0.0
+pytz==2023.3
+croniter==2.0.1
+
+# Notifications
+twilio==8.10.0  # For SMS alerts
+sendgrid==6.10.0  # For email alerts
+
+# Logging and monitoring
+structlog==23.2.0
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1

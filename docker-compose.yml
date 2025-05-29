@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  # Main application
+  golf-booking-app:
+    build: .
+    container_name: golf-booking-app
+    ports:
+      - "8000:8000" # Expose port 8000 to the host machine
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://golf_user:golf_pass@postgres:5432/golf_booking
+      - REDIS_URL=redis://redis:6379/0
+      - SELENIUM_HUB_URL=http://selenium-chrome:4444
+    depends_on:
+      - postgres
+      - redis
+      - selenium-chrome
+    networks:
+      - golf-network
+    restart: unless-stopped
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: golf-postgres
+    environment:
+      - POSTGRES_DB=golf_booking
+      - POSTGRES_USER=golf_user
+      - POSTGRES_PASSWORD=golf_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - golf-network
+    restart: unless-stopped
+
+  # Redis for task queue
+  redis:
+    image: redis:7-alpine
+    container_name: golf-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - golf-network
+    restart: unless-stopped
+
+  # Selenium Chrome for web scraping
+  selenium-chrome:
+    image: seleniarm/standalone-chromium:latest
+    platform: linux/arm64
+    container_name: golf-selenium-chrome
+    ports:
+      - "4444:4444"
+      - "7900:7900"
+    volumes:
+      - /dev/shm:/dev/shm
+    environment:
+      - SE_VNC_NO_PASSWORD=1
+    networks:
+      - golf-network
+    restart: unless-stopped
+  
+  # Celery worker for background tasks
+  celery-worker:
+    build: .
+    container_name: golf-celery-worker
+    command: celery -A src.scheduler worker --loglevel=info
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=postgresql://golf_user:golf_pass@postgres:5432/golf_booking
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+      - selenium-chrome
+    networks:
+      - golf-network
+    restart: unless-stopped
+
+  # Celery beat for scheduled tasks
+  celery-beat:
+    build: .
+    container_name: golf-celery-beat
+    command: celery -A src.scheduler beat --loglevel=info
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=postgresql://golf_user:golf_pass@postgres:5432/golf_booking
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - golf-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  golf-network:
+    driver: bridge
