@@ -1,5 +1,6 @@
 # src/main.py
 import logging
+import uvicorn
 from .config import validate_required_settings, get_settings
 from .models import Base, engine
 
@@ -21,13 +22,15 @@ def main():
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created/verified")
         
-        # Keep the application running
-        logger.info("Application started successfully. Celery workers will handle booking tasks.")
-        
-        # In a real deployment, this might start a web server or other services
-        import time
-        while True:
-            time.sleep(60)  # Keep alive
+        # Start FastAPI server
+        logger.info("Starting FastAPI server on port 8000...")
+        uvicorn.run(
+            "src.api:app",
+            host="0.0.0.0",
+            port=8000,
+            reload=settings.debug,
+            log_level=settings.log_level.lower()
+        )
             
     except KeyboardInterrupt:
         logger.info("Application shutdown requested")
