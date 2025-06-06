@@ -3,6 +3,7 @@
 
 import os
 import time
+import pytz
 from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -233,7 +234,8 @@ class JeremyRanchScraper:
 
     def get_target_date(self, days_advance=7):
         """Calculate the target booking date (7 days from now)"""
-        target_date = datetime.now() + timedelta(days=days_advance)
+        timezone_mtn = pytz.timezone('MST')
+        target_date = datetime.now(timezone_mtn) + timedelta(days=days_advance)
         return target_date
 
     def debug_current_page(self, step_name=""):
@@ -299,34 +301,101 @@ class JeremyRanchScraper:
                 date_input = self.wait.until(
                     EC.presence_of_element_located((By.ID, "txtDate"))
                 )
+                
+                # Clear and set the new date
                 date_input.clear()
                 date_input.send_keys(target_date_str)
+                self.logger.info(f"Date entered: {target_date_str}")
                 
-                # Trigger the date update JavaScript function
-                self.driver.execute_script("updatePersistDate(document.getElementById('txtDate'))")
-                self.logger.info(f"Date set to: {target_date_str}")
+                # Step 2: Find and click the RefreshTimes() button
+                self.logger.info("Looking for RefreshTimes() update button...")
                 
-                # Wait for time slots to reload
-                time.sleep(3)
+                try:
+                    # Find the element with onclick="RefreshTimes()"
+                    refresh_button = self.wait.until(
+                        EC.element_to_be_clickable((By.XPATH, "//a[@onclick='RefreshTimes();']"))
+                    )
+                    self.logger.info("Found RefreshTimes() button")
+                    
+                    # Click the refresh button
+                    self.driver.execute_script("arguments[0].click();", refresh_button)
+                    self.logger.info("RefreshTimes() button clicked via JavaScript")
+                    
+                    # Wait for the page to update with new time slots
+                    self.logger.info("Waiting for time slots to update...")
+                    time.sleep(5)  # Give time for the AJAX request to complete
+                    
+                except TimeoutException:
+                    self.logger.warning("RefreshTimes() button not found, trying direct JavaScript call...")
+                    
+                    # Fallback: Call RefreshTimes() directly via JavaScript
+                    try:
+                        self.driver.execute_script("RefreshTimes();")
+                        self.logger.info("Called RefreshTimes() function directly")
+                        time.sleep(5)
+                    except Exception as js_error:
+                        self.logger.error(f"Failed to call RefreshTimes() directly: {js_error}")
+                        
+                        # Last resort: try the updatePersistDate function
+                        try:
+                            self.driver.execute_script("updatePersistDate(document.getElementById('txtDate'));")
+                            self.logger.info("Called updatePersistDate() as fallback")
+                            time.sleep(3)
+                        except Exception as persist_error:
+                            self.logger.error(f"Failed to call updatePersistDate(): {persist_error}")
+                            return []
                 
             except TimeoutException:
                 self.logger.error("Could not find date input field (#txtDate)")
                 return []
             
-            # Step 2: Wait for time slots to load
+            # Step 3: Wait for time slots to load/update
             self.logger.info("Waiting for time slots to load...")
             try:
-                self.wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ".openTee"))
-                )
-            except TimeoutException:
-                self.logger.warning("No available time slots found (no .openTee elements)")
-                # Check if there are any time slots at all
+                # Wait a bit longer for the AJAX update to complete
+                time.sleep(3)
+                
+                # Check if we have any time slot containers
                 all_slots = self.driver.find_elements(By.CSS_SELECTOR, "div[id$='AM1_'], div[id$='PM1_']")
                 self.logger.info(f"Total time slot containers found: {len(all_slots)}")
-                return []
+                
+                # Look for available slots
+                try:
+                    self.wait.until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, ".openTee"))
+                    )
+                    self.logger.info("Available time slots detected")
+                except TimeoutException:
+                    self.logger.info("No .openTee elements found - checking for any booking elements...")
+                    
+                    # Check for any booking-related elements
+                    booking_elements = self.driver.find_elements(By.CSS_SELECTOR, 
+                        ".openTee, .closedTee, .bookedTee, [class*='tee'], [class*='time'], [onclick*='book'], [onclick*='reserve']")
+                    self.logger.info(f"Found {len(booking_elements)} total booking-related elements")
+                    
+                    if len(booking_elements) == 0:
+                        self.logger.warning("No time slots found - the date might not have been updated properly")
+                        # Debug: Check what's in the date field now
+                        try:
+                            current_date_value = date_input.get_attribute('value')
+                            self.logger.info(f"Current date field value: {current_date_value}")
+                            
+                            # Also check the displayed date in the header
+                            try:
+                                date_header = self.driver.find_element(By.CSS_SELECTOR, ".date, .NC_DashboardDate .date")
+                                header_text = date_header.text
+                                self.logger.info(f"Date header shows: {header_text}")
+                            except:
+                                pass
+                                
+                        except:
+                            pass
+                        return []
+                
+            except Exception as e:
+                self.logger.error(f"Error waiting for time slots: {e}")
             
-            # Step 3: Find all available time slots
+            # Step 4: Find all available time slots
             available_slots = self.driver.find_elements(By.CSS_SELECTOR, ".openTee")
             self.logger.info(f"Found {len(available_slots)} available time slots")
             
@@ -647,6 +716,124 @@ def test_full_booking_flow():
                 print("❌ Login failed")
         else:
             print("❌ Driver setup failed")
+    finally:
+        scraper.cleanup()
+
+def test_refresh_times_button():
+    """Test specifically the RefreshTimes() button functionality"""
+    scraper = JeremyRanchScraper()
+    
+    try:
+        if scraper.setup_driver(headless=False):
+            print("✅ Driver setup successful!")
+            
+            if scraper.login() and scraper.navigate_to_tee_times():
+                print("✅ Reached tee time booking page!")
+                
+                # Get current date display
+                try:
+                    current_date_header = scraper.driver.find_element(By.CSS_SELECTOR, ".date").text
+                    print(f"📅 Current date header: {current_date_header}")
+                except:
+                    print("📅 Could not find date header")
+                
+                # Test date selection with RefreshTimes()
+                target_date = scraper.get_target_date(7)
+                target_date_str = target_date.strftime('%m/%d/%Y')
+                print(f"🎯 Setting date to: {target_date_str}")
+                
+                try:
+                    # Find and set date
+                    date_input = scraper.driver.find_element(By.ID, "txtDate")
+                    current_value = date_input.get_attribute('value')
+                    print(f"📅 Current date input value: {current_value}")
+                    
+                    date_input.clear()
+                    date_input.send_keys(target_date_str)
+                    new_value = date_input.get_attribute('value')
+                    print(f"📅 New date input value: {new_value}")
+                    
+                    # Find the RefreshTimes() button
+                    print("🔍 Looking for RefreshTimes() button...")
+                    try:
+                        refresh_button = scraper.driver.find_element(By.XPATH, "//a[@onclick='RefreshTimes();']")
+                        print("✅ Found RefreshTimes() button!")
+                        
+                        # Get button info
+                        button_html = refresh_button.get_attribute('outerHTML')
+                        print(f"🔗 Button HTML: {button_html[:200]}...")
+                        
+                        # Take screenshot before clicking
+                        scraper.driver.save_screenshot("/tmp/before_refresh.png")
+                        print("📸 Screenshot saved: before_refresh.png")
+                        
+                        # Click the button
+                        scraper.driver.execute_script("arguments[0].click();", refresh_button)
+                        print("🖱️ RefreshTimes() button clicked!")
+                        
+                        # Wait for update
+                        print("⏳ Waiting 8 seconds for update...")
+                        time.sleep(8)
+                        
+                        # Take screenshot after clicking
+                        scraper.driver.save_screenshot("/tmp/after_refresh.png")
+                        print("📸 Screenshot saved: after_refresh.png")
+                        
+                        # Check new date header
+                        try:
+                            new_date_header = scraper.driver.find_element(By.CSS_SELECTOR, ".date").text
+                            print(f"📅 New date header: {new_date_header}")
+                            
+                            if target_date.strftime('%A, %B') in new_date_header:
+                                print("✅ Date header updated successfully!")
+                            else:
+                                print("❌ Date header did not update as expected")
+                        except:
+                            print("❌ Could not find date header after update")
+                        
+                        # Check for time slots
+                        available_slots = scraper.driver.find_elements(By.CSS_SELECTOR, ".openTee")
+                        all_time_slots = scraper.driver.find_elements(By.CSS_SELECTOR, "div[id$='AM1_'], div[id$='PM1_']")
+                        
+                        print(f"📊 Time slots after update:")
+                        print(f"   Available slots (.openTee): {len(available_slots)}")
+                        print(f"   Total time containers: {len(all_time_slots)}")
+                        
+                        if available_slots:
+                            print("🕐 Some available times:")
+                            for i, slot in enumerate(available_slots[:3]):
+                                try:
+                                    time_elem = slot.find_element(By.XPATH, 
+                                        "./ancestor::div[contains(@class, 'tsSection')]//span[@class='timeText']")
+                                    print(f"   {i+1}. {time_elem.text}")
+                                except:
+                                    print(f"   {i+1}. [Could not extract time]")
+                        
+                    except Exception as e:
+                        print(f"❌ RefreshTimes() button not found: {e}")
+                        
+                        # Try direct JavaScript call
+                        print("🔄 Trying direct RefreshTimes() call...")
+                        try:
+                            scraper.driver.execute_script("RefreshTimes();")
+                            print("✅ Called RefreshTimes() directly")
+                            time.sleep(5)
+                            
+                            # Check results
+                            new_date_header = scraper.driver.find_element(By.CSS_SELECTOR, ".date").text
+                            print(f"📅 Date header after direct call: {new_date_header}")
+                            
+                        except Exception as js_error:
+                            print(f"❌ Direct RefreshTimes() call failed: {js_error}")
+                    
+                    print("\n🔍 Browser staying open for inspection...")
+                    print("Check VNC viewer at http://localhost:7900")
+                    print("Screenshots: /tmp/before_refresh.png and /tmp/after_refresh.png")
+                    time.sleep(60)
+                    
+                except Exception as e:
+                    print(f"❌ Test failed: {e}")
+                    
     finally:
         scraper.cleanup()
 
