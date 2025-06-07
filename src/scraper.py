@@ -738,7 +738,7 @@ def test_refresh_times_button():
                     print("📅 Could not find date header")
                 
                 # Test date selection with RefreshTimes()
-                target_date = scraper.get_target_date(7)
+                target_date = scraper.get_target_date(6)
                 target_date_str = target_date.strftime('%m/%d/%Y')
                 print(f"🎯 Setting date to: {target_date_str}")
                 

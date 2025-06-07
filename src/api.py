@@ -76,7 +76,7 @@ class BookingRequestResponse(BaseModel):
         from_attributes = True
 
 class BookingStatusUpdate(BaseModel):
-    status: str = Field(..., regex="^(pending|running|completed|failed|cancelled)$")
+    status: str = Field(..., pattern="^(pending|running|completed|failed|cancelled)$")
 
 # Routes
 @app.get("/", response_class=HTMLResponse)
@@ -226,10 +226,10 @@ async def create_booking_request(
         
         # Create booking request in database
         booking_id = create_booking_request(
-            user_name=booking_request.user_name,
-            requested_date=booking_request.requested_date,
-            requested_time=requested_time_obj,
-            scheduled_for=execution_datetime_utc
+            booking_request.user_name,
+            booking_request.requested_date,
+            requested_time_obj,
+            execution_datetime_utc
         )
         
         # Schedule the Celery task
