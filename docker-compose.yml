@@ -78,6 +78,8 @@ services:
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://golf_user:golf_pass@postgres:5432/golf_booking
       - REDIS_URL=redis://redis:6379/0
@@ -97,6 +99,8 @@ services:
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://golf_user:golf_pass@postgres:5432/golf_booking
       - REDIS_URL=redis://redis:6379/0

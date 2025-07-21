@@ -3,6 +3,7 @@ from celery import Celery
 from celery.schedules import crontab
 from datetime import datetime, timedelta
 import os
+import logging
 from .config import get_settings
 
 settings = get_settings()
@@ -32,50 +33,70 @@ celery.conf.update(
 
 @celery.task(bind=True, max_retries=3)
 def book_tee_time_task(self, booking_request_id: int):
-    """Celery task to book a tee time"""
-    from .scraper import GolfBookingScraper
-    from .models import get_booking_request, update_booking_status
-    from .notifications import send_booking_notification
+    """Celery task to book a tee time using Jeremy Ranch scraper"""
+    logger = logging.getLogger(__name__)
+    logger.info(f"🎯 Starting booking task for request ID: {booking_request_id}")
     
     try:
         # Get booking request from database
+        from .models import get_booking_request, update_booking_status
+        
         booking_request = get_booking_request(booking_request_id)
         if not booking_request:
             raise Exception(f"Booking request {booking_request_id} not found")
         
-        # Initialize scraper
-        scraper = GolfBookingScraper(
-            username=settings.golf_username,
-            password=settings.golf_password,
-            base_url=settings.golf_club_url
-        )
+        logger.info(f"📋 Booking details: {booking_request.user_name} - {booking_request.requested_date} at {booking_request.requested_time}")
         
-        # Attempt booking
-        success = scraper.attempt_booking(
+        # Update status to running
+        update_booking_status(booking_request_id, 'running', success=None)
+        
+        # Import Jeremy Ranch scraper
+        from .scraper import JeremyRanchScraper
+        
+        # Initialize scraper (no arguments - gets config from settings)
+        scraper = JeremyRanchScraper()
+        
+        # Attempt booking - use test_mode=True for testing, False for real booking
+        test_mode = True  # Change to False when ready for real bookings
+        
+        success = scraper.book_tee_time(
             target_date=booking_request.requested_date,
-            target_time=booking_request.requested_time.strftime('%I:%M %p')
+            preferred_time=booking_request.requested_time.strftime('%H:%M'),
+            test_mode=test_mode
         )
         
         if success:
             # Update database with success
-            update_booking_status(booking_request_id, 'completed', success=True)
-            send_booking_notification(booking_request, success=True)
-            return f"Successfully booked tee time for {booking_request.requested_date}"
+            status = 'test_success' if test_mode else 'completed'
+            update_booking_status(booking_request_id, status, success=True)
+            
+            message = f"{'Test successful' if test_mode else 'Successfully booked'} tee time for {booking_request.requested_date}"
+            logger.info(f"✅ {message}")
+            
+            return message
         else:
             # Retry logic
             if self.request.retries < self.max_retries:
-                # Retry in 5 minutes
+                logger.warning(f"⚠️ Booking attempt failed, retrying in 5 minutes (attempt {self.request.retries + 1}/{self.max_retries})")
                 raise self.retry(countdown=300)
             else:
                 # Max retries reached
-                update_booking_status(booking_request_id, 'failed', success=False)
-                send_booking_notification(booking_request, success=False, 
-                                        error="Max booking attempts exceeded")
+                error_msg = f"Max booking attempts exceeded ({self.max_retries} attempts)"
+                logger.error(f"❌ {error_msg}")
+                update_booking_status(booking_request_id, 'failed', success=False, error=error_msg)
                 return f"Failed to book tee time after {self.max_retries} attempts"
                 
     except Exception as exc:
-        update_booking_status(booking_request_id, 'error', success=False, error=str(exc))
-        send_booking_notification(booking_request, success=False, error=str(exc))
+        error_msg = f"Booking task error: {str(exc)}"
+        logger.error(f"❌ {error_msg}")
+        
+        from .models import update_booking_status
+        update_booking_status(booking_request_id, 'error', success=False, error=error_msg)
+        
+        # Don't retry on certain errors
+        if "not found" in str(exc).lower() or "invalid" in str(exc).lower():
+            return error_msg
+        
         raise
 
 @celery.task
@@ -86,7 +107,12 @@ def check_pending_bookings():
     current_time = datetime.utcnow()
     pending_bookings = get_pending_bookings(current_time)
     
+    logger = logging.getLogger(__name__)
+    logger.info(f"🔍 Checking for pending bookings at {current_time}")
+    logger.info(f"📋 Found {len(pending_bookings)} pending booking(s)")
+    
     for booking in pending_bookings:
+        logger.info(f"🚀 Scheduling booking task for: {booking.user_name} - {booking.requested_date} at {booking.requested_time}")
         # Schedule the booking task
         book_tee_time_task.delay(booking.id)
     

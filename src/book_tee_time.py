@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# book_tee_time.py - Simple CLI for booking tee times
-
 import sys
 import os
 from datetime import datetime, date, time, timedelta
@@ -33,16 +30,25 @@ def main():
             print("❌ Invalid date format. Use YYYY-MM-DD")
             return
         
-        # Validate date is in future and more than 7 days out
+        # Validate date is in future
         today = date.today()
         if requested_date <= today:
             print("❌ Date must be in the future")
             return
         
-        if requested_date <= today + timedelta(days=7):
-            print("❌ Date must be more than 7 days in the future")
-            print(f"   (Earliest allowed: {(today + timedelta(days=8)).strftime('%Y-%m-%d')})")
-            return
+        # Check if this is within 7 days (immediate booking) or future scheduling
+        days_out = (requested_date - today).days
+        is_immediate_booking = days_out <= 7
+        
+        if is_immediate_booking:
+            print(f"🚀 This date is {days_out} days away - will book IMMEDIATELY!")
+            execution_datetime_utc = datetime.utcnow()  # Book right now
+        else:
+            # Future booking - schedule for 7 days prior
+            if days_out <= 7:
+                print("❌ Date must be more than 7 days in the future for scheduled booking")
+                print(f"   (Earliest allowed: {(today + timedelta(days=8)).strftime('%Y-%m-%d')})")
+                return
         
         # Get time
         time_input = input("Enter preferred time (HH:MM, e.g., 08:00): ").strip()
@@ -59,17 +65,22 @@ def main():
         
         print(f"\n📋 Booking Summary:")
         print(f"   Name: {user_name}")
-        print(f"   Date: {requested_date.strftime('%A, %B %d, %Y')}")
+        print(f"   Date: {requested_date.strftime('%A, %B %d, %Y')} ({days_out} days away)")
         print(f"   Time: {requested_time.strftime('%I:%M %p')}")
         
-        # Calculate execution time
-        mtn_tz = pytz.timezone('MST')
-        execution_date = requested_date - timedelta(days=7)
-        execution_datetime_naive = datetime.combine(execution_date, time(23, 59, 50))
-        execution_datetime_mtn = mtn_tz.localize(execution_datetime_naive)
-        execution_datetime_utc = execution_datetime_mtn.astimezone(pytz.UTC).replace(tzinfo=None)
+        if is_immediate_booking:
+            print(f"   🚀 IMMEDIATE BOOKING - Will execute within minutes!")
+            execution_time_display = "ASAP (within 5 minutes)"
+        else:
+            # Calculate execution time for future bookings
+            mtn_tz = pytz.timezone('MST')
+            execution_date = requested_date - timedelta(days=7)
+            execution_datetime_naive = datetime.combine(execution_date, time(23, 59, 50))
+            execution_datetime_mtn = mtn_tz.localize(execution_datetime_naive)
+            execution_datetime_utc = execution_datetime_mtn.astimezone(pytz.UTC).replace(tzinfo=None)
+            execution_time_display = execution_datetime_mtn.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')
         
-        print(f"   Will execute: {execution_datetime_mtn.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')}")
+        print(f"   Will execute: {execution_time_display}")
         
         confirm = input("\n✅ Confirm booking? (y/N): ").strip().lower()
         if confirm != 'y':
@@ -88,15 +99,26 @@ def main():
             print(f"\n🎉 Booking request created successfully!")
             print(f"   Booking ID: {booking_id}")
             print(f"   Status: Pending")
-            print(f"   Execution: {execution_datetime_mtn.strftime('%A, %B %d at %I:%M:%S %p %Z')}")
+            
+            if is_immediate_booking:
+                print(f"   🚀 IMMEDIATE BOOKING - Celery Beat will pick this up within 5 minutes!")
+                print(f"   📱 Watch the logs with: docker-compose logs -f celery-worker")
+            else:
+                print(f"   ⏰ Scheduled execution: {execution_time_display}")
             
             print(f"   ✅ Booking scheduled in database")
             print(f"   📅 Celery Beat will automatically pick this up based on scheduled_for time")
             
-            print(f"\n📝 Important Notes:")
-            print(f"   • Keep your computer/server running until {execution_date.strftime('%B %d')}")
-            print(f"   • The booking will attempt exactly 7 days before your requested date")
-            print(f"   • If your preferred time isn't available, the closest time will be booked")
+            if is_immediate_booking:
+                print(f"\n🔥 TESTING MODE - Watch for immediate booking!")
+                print(f"   • Check celery-worker logs to see the booking attempt")
+                print(f"   • The scraper will navigate to Jeremy Ranch and book your tee time")
+                print(f"   • If successful, you'll have a real tee time reservation!")
+            else:
+                print(f"\n📝 Important Notes:")
+                print(f"   • Keep your computer/server running until {execution_date.strftime('%B %d')}")
+                print(f"   • The booking will attempt exactly 7 days before your requested date")
+                print(f"   • If your preferred time isn't available, the closest time will be booked")
             
         except Exception as e:
             print(f"❌ Failed to create booking: {e}")

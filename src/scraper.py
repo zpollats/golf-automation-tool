@@ -1,5 +1,5 @@
-# Jeremy Ranch Golf Club Scraper Configuration
-# Based on HTML analysis of ClubEssential platform
+# simplified_scraper.py
+# Cleaned up Jeremy Ranch Golf Club Scraper
 
 import os
 import time
@@ -12,6 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import logging
+import re
 
 class JeremyRanchScraper:
     def __init__(self):
@@ -22,868 +23,382 @@ class JeremyRanchScraper:
         self.driver = None
         self.wait = None
         
-        # Login form element IDs (from HTML analysis)
-        self.username_field_id = "masterPageUC_MPCA396908_ctl00_ctl01_txtUsername"
-        self.password_field_id = "masterPageUC_MPCA396908_ctl00_ctl01_txtPassword"
-        self.login_button_id = "btnSecureLogin"
-        
         # Setup logging
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
 
     def setup_driver(self, headless=True):
-        """Initialize Chrome WebDriver with appropriate options"""
+        """Initialize Chrome WebDriver"""
         options = Options()
         if headless:
             options.add_argument('--headless')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         
-        # Connect to Selenium Grid in Docker
         selenium_url = os.getenv('SELENIUM_HUB_URL', 'http://selenium-chrome:4444')
         
         try:
-            self.driver = webdriver.Remote(
-                command_executor=selenium_url,
-                options=options
-            )
+            self.driver = webdriver.Remote(command_executor=selenium_url, options=options)
             self.wait = WebDriverWait(self.driver, 10)
-            self.logger.info("WebDriver initialized successfully")
+            self.logger.info("✅ WebDriver initialized")
             return True
         except Exception as e:
-            self.logger.error(f"Failed to initialize WebDriver: {e}")
+            self.logger.error(f"❌ WebDriver failed: {e}")
             return False
 
     def login(self):
-        """Login to Jeremy Ranch Golf Club website"""
+        """Login to the website"""
         try:
-            self.logger.info("Navigating to login page...")
+            self.logger.info("🔑 Logging in...")
             self.driver.get(self.login_url)
-            
-            # Wait for page to load
             time.sleep(2)
             
-            # Find and fill username field
-            self.logger.info("Entering username...")
+            # Enter credentials
             username_field = self.wait.until(
-                EC.presence_of_element_located((By.ID, self.username_field_id))
+                EC.presence_of_element_located((By.ID, "masterPageUC_MPCA396908_ctl00_ctl01_txtUsername"))
             )
-            username_field.clear()
             username_field.send_keys(self.username)
             
-            # Find and fill password field
-            self.logger.info("Entering password...")
-            password_field = self.driver.find_element(By.ID, self.password_field_id)
-            password_field.clear()
+            password_field = self.driver.find_element(By.ID, "masterPageUC_MPCA396908_ctl00_ctl01_txtPassword")
             password_field.send_keys(self.password)
             
-            # Click login button
-            self.logger.info("Clicking login button...")
-            login_button = self.driver.find_element(By.ID, self.login_button_id)
+            login_button = self.driver.find_element(By.ID, "btnSecureLogin")
             login_button.click()
             
-            # Wait for login to complete (check for redirect or success indicator)
             time.sleep(3)
             
-            # Check if login was successful
-            if self.is_logged_in():
-                self.logger.info("Login successful!")
+            # Check if login worked (not on login page anymore)
+            if "login" not in self.driver.current_url.lower():
+                self.logger.info("✅ Login successful")
                 return True
             else:
-                self.logger.error("Login failed - still on login page")
+                self.logger.error("❌ Login failed")
                 return False
                 
-        except TimeoutException:
-            self.logger.error("Timeout waiting for login elements")
-            return False
         except Exception as e:
-            self.logger.error(f"Login error: {e}")
+            self.logger.error(f"❌ Login error: {e}")
             return False
 
-    def is_logged_in(self):
-        """Check if successfully logged in by looking for member-specific elements"""
+    def navigate_to_booking(self):
+        """Navigate to the tee time booking page"""
         try:
-            # After login, we should be redirected away from login page
-            current_url = self.driver.current_url
-            if "login" not in current_url.lower():
+            self.logger.info("🧭 Navigating to booking page...")
+            
+            # Direct URL approach (most reliable)
+            booking_url = "https://www.thejeremy.com/Default.aspx?p=dynamicmodule&pageid=397060&tt=booking&ssid=319820&vnf=1"
+            self.driver.get(booking_url)
+            time.sleep(5)
+            
+            # Check if we have the date input field
+            try:
+                self.wait.until(EC.presence_of_element_located((By.ID, "txtDate")))
+                self.logger.info("✅ Reached booking page")
                 return True
-            
-            # Alternative: check for logout link or member menu
-            try:
-                # Look for common post-login elements
-                member_elements = self.driver.find_elements(By.XPATH, 
-                    "//a[contains(text(), 'Logout') or contains(text(), 'Member') or contains(text(), 'Account')]")
-                return len(member_elements) > 0
-            except:
-                pass
-                
-            return False
-        except Exception as e:
-            self.logger.error(f"Error checking login status: {e}")
-            return False
-
-    def navigate_to_tee_times(self):
-        """Navigate to tee time booking section"""
-        try:
-            self.logger.info("Looking for 'Book A Tee Time' link...")
-            
-            # First try the specific "Book A Tee Time" link from the dashboard
-            book_tee_time_selectors = [
-                "//a[contains(text(), 'Book A Tee Time')]",
-                "//a[@href*='397060']",  # From the HTML: pageid=397060&tt=booking
-                "//a[@href*='Tee Times Reservations']",
-                "//span[contains(text(), 'Book A Tee Time')]/parent::a"
-            ]
-            
-            for selector in book_tee_time_selectors:
-                try:
-                    tee_time_link = self.wait.until(
-                        EC.element_to_be_clickable((By.XPATH, selector))
-                    )
-                    self.logger.info(f"Found 'Book A Tee Time' link: {tee_time_link.text}")
-                    tee_time_link.click()
-                    time.sleep(3)
-                    
-                    # Wait for the booking page to load and check for booking elements
-                    try:
-                        # Wait for either the date input or time slots to appear
-                        self.wait.until(
-                            EC.any_of(
-                                EC.presence_of_element_located((By.ID, "txtDate")),
-                                EC.presence_of_element_located((By.CSS_SELECTOR, "div[id$='AM1_'], div[id$='PM1_']"))
-                            )
-                        )
-                        self.logger.info("Successfully navigated to tee time booking page")
-                        return True
-                    except TimeoutException:
-                        self.logger.warning("Clicked link but booking elements not found, trying next selector...")
-                        continue
-                        
-                except (NoSuchElementException, TimeoutException):
-                    continue
-            
-            # Alternative: Try the main navigation Golf > Tee Times Reservations
-            self.logger.info("Trying main navigation Golf menu...")
-            try:
-                # Look for Golf in main navigation
-                golf_nav = self.driver.find_element(By.XPATH, "//li[contains(text(), 'Golf')]")
-                golf_nav.click()
-                time.sleep(2)
-                
-                # Then look for Tee Times Reservations
-                tee_reservations = self.driver.find_element(
-                    By.XPATH, "//a[contains(text(), 'Tee Times Reservations')]"
-                )
-                tee_reservations.click()
-                time.sleep(3)
-                
-                # Check if we reached the booking page
-                try:
-                    self.wait.until(
-                        EC.presence_of_element_located((By.ID, "txtDate"))
-                    )
-                    return True
-                except TimeoutException:
-                    pass
-                    
-            except NoSuchElementException:
-                pass
-            
-            # Final fallback: direct URL navigation if we know the booking URL
-            self.logger.info("Trying direct navigation to booking URL...")
-            try:
-                booking_url = "https://www.thejeremy.com/Default.aspx?p=dynamicmodule&pageid=397060&tt=booking&ssid=319820&vnf=1"
-                self.driver.get(booking_url)
-                time.sleep(5)
-                
-                # Check if we reached the booking page
-                try:
-                    self.wait.until(
-                        EC.presence_of_element_located((By.ID, "txtDate"))
-                    )
-                    self.logger.info("Successfully navigated via direct URL")
-                    return True
-                except TimeoutException:
-                    pass
-                    
-            except Exception as e:
-                self.logger.error(f"Direct URL navigation failed: {e}")
-            
-            self.logger.warning("Could not find tee time booking navigation")
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"Error navigating to tee times: {e}")
-            return False
-
-    def wait_for_page_load(self, timeout=10):
-        """Wait for ASP.NET page to fully load"""
-        try:
-            # Wait for ASP.NET specific indicators
-            self.wait.until(
-                EC.presence_of_element_located((By.NAME, "__VIEWSTATE"))
-            )
-            # Additional wait for dynamic content
-            time.sleep(2)
-            return True
-        except TimeoutException:
-            self.logger.warning("Page load timeout - continuing anyway")
-            return False
-
-    def get_target_date(self, days_advance=7):
-        """Calculate the target booking date (7 days from now)"""
-        timezone_mtn = pytz.timezone('MST')
-        target_date = datetime.now(timezone_mtn) + timedelta(days=days_advance)
-        return target_date
-
-    def debug_current_page(self, step_name=""):
-        """Debug helper to log current page info"""
-        try:
-            current_url = self.driver.current_url
-            page_title = self.driver.title
-            self.logger.info(f"Debug {step_name} - URL: {current_url}")
-            self.logger.info(f"Debug {step_name} - Title: {page_title}")
-            
-            # Look for common booking elements
-            booking_indicators = [
-                "//input[@type='date']",
-                "//select[contains(@name, 'date')]",
-                "//div[contains(@class, 'calendar')]",
-                "//div[contains(@class, 'time')]",
-                "//button[contains(text(), 'Book')]",
-                "//a[contains(text(), 'Available')]"
-            ]
-            
-            found_elements = []
-            for selector in booking_indicators:
-                try:
-                    elements = self.driver.find_elements(By.XPATH, selector)
-                    if elements:
-                        found_elements.append(f"{selector}: {len(elements)} found")
-                except:
-                    pass
-            
-            if found_elements:
-                self.logger.info(f"Debug {step_name} - Booking elements found: {found_elements}")
-            else:
-                self.logger.info(f"Debug {step_name} - No obvious booking elements found")
-                
-        except Exception as e:
-            self.logger.error(f"Debug error: {e}")
-
-    def save_page_source(self, filename_prefix="page"):
-        """Save current page source for analysis"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"/tmp/{filename_prefix}_{timestamp}.html"
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(self.driver.page_source)
-            self.logger.info(f"Page source saved to: {filename}")
-            return filename
-        except Exception as e:
-            self.logger.error(f"Failed to save page source: {e}")
-            return None
-        """Calculate the target booking date (7 days from now)"""
-        target_date = datetime.now() + timedelta(days=days_advance)
-        return target_date
-
-    def find_available_times(self, target_date):
-        """Find available tee times for the target date"""
-        try:
-            target_date_str = target_date.strftime('%m/%d/%Y')  # MM/DD/YYYY format
-            self.logger.info(f"Looking for available times on {target_date_str}")
-            
-            # Step 1: Set the date in the date picker
-            self.logger.info("Setting date in date picker...")
-            try:
-                date_input = self.wait.until(
-                    EC.presence_of_element_located((By.ID, "txtDate"))
-                )
-                
-                # Clear and set the new date
-                date_input.clear()
-                date_input.send_keys(target_date_str)
-                self.logger.info(f"Date entered: {target_date_str}")
-                
-                # Step 2: Find and click the RefreshTimes() button
-                self.logger.info("Looking for RefreshTimes() update button...")
-                
-                try:
-                    # Find the element with onclick="RefreshTimes()"
-                    refresh_button = self.wait.until(
-                        EC.element_to_be_clickable((By.XPATH, "//a[@onclick='RefreshTimes();']"))
-                    )
-                    self.logger.info("Found RefreshTimes() button")
-                    
-                    # Click the refresh button
-                    self.driver.execute_script("arguments[0].click();", refresh_button)
-                    self.logger.info("RefreshTimes() button clicked via JavaScript")
-                    
-                    # Wait for the page to update with new time slots
-                    self.logger.info("Waiting for time slots to update...")
-                    time.sleep(5)  # Give time for the AJAX request to complete
-                    
-                except TimeoutException:
-                    self.logger.warning("RefreshTimes() button not found, trying direct JavaScript call...")
-                    
-                    # Fallback: Call RefreshTimes() directly via JavaScript
-                    try:
-                        self.driver.execute_script("RefreshTimes();")
-                        self.logger.info("Called RefreshTimes() function directly")
-                        time.sleep(5)
-                    except Exception as js_error:
-                        self.logger.error(f"Failed to call RefreshTimes() directly: {js_error}")
-                        
-                        # Last resort: try the updatePersistDate function
-                        try:
-                            self.driver.execute_script("updatePersistDate(document.getElementById('txtDate'));")
-                            self.logger.info("Called updatePersistDate() as fallback")
-                            time.sleep(3)
-                        except Exception as persist_error:
-                            self.logger.error(f"Failed to call updatePersistDate(): {persist_error}")
-                            return []
-                
             except TimeoutException:
-                self.logger.error("Could not find date input field (#txtDate)")
-                return []
+                self.logger.error("❌ Booking page not loaded properly")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Navigation error: {e}")
+            return False
+
+    def set_date_and_refresh(self, target_date):
+        """Set the date and refresh the time slots"""
+        try:
+            date_str = target_date.strftime('%m/%d/%Y')
+            self.logger.info(f"📅 Setting date to {date_str}")
             
-            # Step 3: Wait for time slots to load/update
-            self.logger.info("Waiting for time slots to load...")
+            # Set date
+            date_input = self.driver.find_element(By.ID, "txtDate")
+            date_input.clear()
+            date_input.send_keys(date_str)
+            
+            # Refresh times
             try:
-                # Wait a bit longer for the AJAX update to complete
-                time.sleep(3)
-                
-                # Check if we have any time slot containers
-                all_slots = self.driver.find_elements(By.CSS_SELECTOR, "div[id$='AM1_'], div[id$='PM1_']")
-                self.logger.info(f"Total time slot containers found: {len(all_slots)}")
-                
-                # Look for available slots
-                try:
-                    self.wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".openTee"))
-                    )
-                    self.logger.info("Available time slots detected")
-                except TimeoutException:
-                    self.logger.info("No .openTee elements found - checking for any booking elements...")
-                    
-                    # Check for any booking-related elements
-                    booking_elements = self.driver.find_elements(By.CSS_SELECTOR, 
-                        ".openTee, .closedTee, .bookedTee, [class*='tee'], [class*='time'], [onclick*='book'], [onclick*='reserve']")
-                    self.logger.info(f"Found {len(booking_elements)} total booking-related elements")
-                    
-                    if len(booking_elements) == 0:
-                        self.logger.warning("No time slots found - the date might not have been updated properly")
-                        # Debug: Check what's in the date field now
-                        try:
-                            current_date_value = date_input.get_attribute('value')
-                            self.logger.info(f"Current date field value: {current_date_value}")
-                            
-                            # Also check the displayed date in the header
-                            try:
-                                date_header = self.driver.find_element(By.CSS_SELECTOR, ".date, .NC_DashboardDate .date")
-                                header_text = date_header.text
-                                self.logger.info(f"Date header shows: {header_text}")
-                            except:
-                                pass
-                                
-                        except:
-                            pass
-                        return []
-                
-            except Exception as e:
-                self.logger.error(f"Error waiting for time slots: {e}")
+                refresh_button = self.driver.find_element(By.XPATH, "//a[@onclick='RefreshTimes();']")
+                self.driver.execute_script("arguments[0].click();", refresh_button)
+            except:
+                self.driver.execute_script("RefreshTimes();")
             
-            # Step 4: Find all available time slots
-            available_slots = self.driver.find_elements(By.CSS_SELECTOR, ".openTee")
-            self.logger.info(f"Found {len(available_slots)} available time slots")
+            time.sleep(5)  # Wait for refresh
+            self.logger.info("✅ Date set and times refreshed")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Date setting error: {e}")
+            return False
+
+    def get_available_times(self):
+        """Get all available time slots"""
+        try:
+            self.logger.info("🔍 Finding available times...")
             
             time_slots = []
-            for slot in available_slots:
+            slot_containers = self.driver.find_elements(By.CSS_SELECTOR, "div[id$='_'].tsSection")
+            
+            for container in slot_containers:
                 try:
-                    # Get the time text from the slot
-                    time_text_element = slot.find_element(By.XPATH, 
-                        "./ancestor::div[contains(@class, 'tsSection')]//span[@class='timeText']")
-                    time_text = time_text_element.text
+                    # Get time text
+                    time_element = container.find_element(By.CSS_SELECTOR, ".timeText")
+                    time_text = time_element.text.strip().split('\n')[0]
                     
-                    # Get the container ID to identify the specific slot
-                    time_container = slot.find_element(By.XPATH, 
-                        "./ancestor::div[contains(@id, 'AM1_') or contains(@id, 'PM1_')]")
-                    slot_id = time_container.get_attribute('id')
-                    
-                    time_slots.append({
-                        'element': slot,
-                        'time': time_text,
-                        'slot_id': slot_id,
-                        'available': True
-                    })
-                    
-                    self.logger.info(f"Available slot: {time_text} (ID: {slot_id})")
-                    
+                    # Check if available (not reserved)
+                    if self._is_slot_available(container):
+                        # Find reserve button
+                        reserve_button = self._find_reserve_button(container)
+                        if reserve_button:
+                            time_slots.append({
+                                'time': time_text,
+                                'element': reserve_button,
+                                'container': container
+                            })
+                            self.logger.info(f"   ✅ {time_text}")
+                        else:
+                            self.logger.info(f"   ⚠️ {time_text} (no reserve button)")
+                    else:
+                        self.logger.info(f"   ❌ {time_text} (booked)")
+                        
                 except Exception as e:
-                    self.logger.warning(f"Could not extract time info from slot: {e}")
                     continue
             
+            self.logger.info(f"📊 Found {len(time_slots)} available slots")
             return time_slots
             
         except Exception as e:
-            self.logger.error(f"Error finding available times: {e}")
+            self.logger.error(f"❌ Error finding times: {e}")
             return []
 
-    def book_tee_time(self, time_slot, preferred_times=None):
-        """Book a specific tee time using Jeremy Ranch's ASP.NET system"""
+    def _is_slot_available(self, container):
+        """Check if a slot is available"""
+        html = container.get_attribute('innerHTML').lower()
+        booked_indicators = ['nc_reserved', 'reservedtext', 'reserved']
+        return not any(indicator in html for indicator in booked_indicators)
+
+    def _find_reserve_button(self, container):
+        """Find the clickable reserve button in a container"""
         try:
-            self.logger.info(f"Attempting to book tee time: {time_slot['time']} (ID: {time_slot['slot_id']})")
+            # Look for onclick with LaunchReserver
+            clickable = container.find_element(By.XPATH, ".//div[contains(@onclick, 'LaunchReserver')]")
+            return clickable
+        except:
+            try:
+                # Alternative: find span with "Reserve" text and get parent
+                reserve_span = container.find_element(By.XPATH, ".//span[contains(text(), 'Reserve')]")
+                parent = reserve_span.find_element(By.XPATH, "./..")
+                if 'LaunchReserver' in parent.get_attribute('onclick') or '':
+                    return parent
+            except:
+                pass
+        return None
+
+    def convert_time_to_minutes(self, time_str):
+        """Convert time string like '2:45 PM' to minutes since midnight"""
+        try:
+            # Parse time like "2:45 PM" or "14:45"
+            if ':' not in time_str:
+                return None
+                
+            # Handle 24-hour format
+            if 'AM' not in time_str.upper() and 'PM' not in time_str.upper():
+                # Assume 24-hour format
+                hour, minute = map(int, time_str.split(':'))
+                return hour * 60 + minute
             
-            # Click the Reserve button using JavaScript (more reliable for ASP.NET)
+            # Handle 12-hour format
+            time_match = re.search(r'(\d{1,2}):(\d{2})\s*([AP]M)', time_str.upper())
+            if time_match:
+                hour = int(time_match.group(1))
+                minute = int(time_match.group(2))
+                am_pm = time_match.group(3)
+                
+                # Convert to 24-hour
+                if am_pm == 'PM' and hour != 12:
+                    hour += 12
+                elif am_pm == 'AM' and hour == 12:
+                    hour = 0
+                
+                return hour * 60 + minute
+                
+        except Exception as e:
+            self.logger.warning(f"Could not parse time '{time_str}': {e}")
+        return None
+
+    def find_best_time(self, available_slots, preferred_time):
+        """Find the closest available time to preference"""
+        if not available_slots:
+            return None
+            
+        # Convert preferred time to minutes
+        preferred_minutes = self.convert_time_to_minutes(preferred_time)
+        if preferred_minutes is None:
+            self.logger.warning(f"Could not parse preferred time: {preferred_time}")
+            return available_slots[0]  # Return first available
+        
+        best_slot = None
+        smallest_diff = float('inf')
+        
+        for slot in available_slots:
+            slot_minutes = self.convert_time_to_minutes(slot['time'])
+            if slot_minutes is not None:
+                diff = abs(slot_minutes - preferred_minutes)
+                if diff < smallest_diff:
+                    smallest_diff = diff
+                    best_slot = slot
+                    
+                self.logger.info(f"   {slot['time']}: {diff} minutes from target")
+        
+        if best_slot:
+            self.logger.info(f"🎯 Best match: {best_slot['time']} ({smallest_diff} min from {preferred_time})")
+        
+        return best_slot or available_slots[0]
+
+    def attempt_booking(self, time_slot, test_mode=True):
+        """Attempt to book a time slot"""
+        try:
+            self.logger.info(f"🚀 {'Testing' if test_mode else 'Booking'} {time_slot['time']}...")
+            
+            # Click reserve button
             reserve_button = time_slot['element']
             self.driver.execute_script("arguments[0].click();", reserve_button)
+            time.sleep(5)  # Wait for popup to load
             
-            self.logger.info("Clicked Reserve button")
-            time.sleep(3)
+            # Go directly to iframe 2 where we know the Make Tee Time button is
+            self.logger.info("🎯 Looking for Make Tee Time button in iframe 2...")
             
-            # Wait for the booking form or confirmation to appear
-            # This could be a popup, new page, or form update
             try:
-                # Look for common booking confirmation elements
-                confirmation_selectors = [
-                    ".booking-confirmation",
-                    "[class*='confirm']",
-                    "[class*='success']",
-                    "input[value*='Confirm']",
-                    "button[onclick*='confirm']",
-                    ".notifyjs-corner"  # Notification system
-                ]
+                iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+                self.logger.info(f"Found {len(iframes)} iframes")
                 
-                confirmation_found = False
-                for selector in confirmation_selectors:
-                    try:
-                        confirmation_element = self.wait.until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                        )
-                        self.logger.info(f"Found confirmation element: {selector}")
-                        confirmation_found = True
-                        break
-                    except TimeoutException:
-                        continue
-                
-                if not confirmation_found:
-                    # Check if we're still on the same page or redirected
-                    current_url = self.driver.current_url
-                    self.logger.info(f"Current URL after booking attempt: {current_url}")
+                if len(iframes) >= 2:
+                    # Switch to iframe 2 (index 1)
+                    self.driver.switch_to.frame(iframes[1])
+                    self.logger.info("✅ Switched to iframe 2")
                     
-                    # Look for any success indicators in the page content
-                    page_text = self.driver.page_source.lower()
-                    success_indicators = ['booked', 'reserved', 'confirmed', 'success']
+                    # Look for the Make Tee Time button
+                    make_button = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.ID, "ctl00_ctrl_MakeTeeTime_lbBook"))
+                    )
                     
-                    for indicator in success_indicators:
-                        if indicator in page_text:
-                            self.logger.info(f"Found success indicator: {indicator}")
+                    if make_button:
+                        self.logger.info("✅ Found Make Tee Time button!")
+                        
+                        if test_mode:
+                            self.logger.info("✅ TEST SUCCESS: Found Make Tee Time button and ready to book!")
+                            self.logger.info("✅ Ready for real booking (set test_mode=False)")
+                            self.driver.switch_to.default_content()
                             return True
-                
-                # If there's a confirmation step, handle it
-                if confirmation_found:
-                    # Look for final confirmation button
-                    final_confirm_selectors = [
-                        "input[value*='Confirm']",
-                        "button[onclick*='confirm']",
-                        ".confirm-button",
-                        "input[type='submit']"
-                    ]
+                        else:
+                            self.logger.info("🏌️ Clicking Make Tee Time button...")
+                            self.driver.execute_script("arguments[0].click();", make_button)
+                            time.sleep(5)
+                            
+                            # Switch back to main content to check results
+                            self.driver.switch_to.default_content()
+                            return self._verify_booking_success()
+                    else:
+                        self.logger.error("❌ Make Tee Time button not found in iframe 2")
+                        self.driver.switch_to.default_content()
+                        return False
+                else:
+                    self.logger.error("❌ Not enough iframes found")
+                    return False
                     
-                    for selector in final_confirm_selectors:
-                        try:
-                            confirm_btn = self.driver.find_element(By.CSS_SELECTOR, selector)
-                            if confirm_btn.is_enabled() and confirm_btn.is_displayed():
-                                self.logger.info(f"Clicking final confirmation button: {selector}")
-                                self.driver.execute_script("arguments[0].click();", confirm_btn)
-                                time.sleep(3)
-                                break
-                        except NoSuchElementException:
-                            continue
-                
-                # Verify booking success
-                return self.verify_booking_success()
-                
-            except Exception as e:
-                self.logger.error(f"Error in booking confirmation process: {e}")
+            except TimeoutException:
+                self.logger.error("❌ Timeout waiting for Make Tee Time button")
+                self.driver.switch_to.default_content()
                 return False
-            
+            except Exception as iframe_error:
+                self.logger.error(f"❌ Error accessing iframe: {iframe_error}")
+                self.driver.switch_to.default_content()
+                return False
+                
         except Exception as e:
-            self.logger.error(f"Error booking tee time: {e}")
+            self.logger.error(f"❌ Booking error: {e}")
+            self.driver.switch_to.default_content()
             return False
 
-    def verify_booking_success(self):
-        """Verify that the booking was successful"""
+    def _verify_booking_success(self):
+        """Verify booking was successful"""
         try:
-            # Look for success indicators specific to Jeremy Ranch/ClubEssential
-            success_indicators = [
-                ".notifyjs-corner",  # Notification system
-                "[class*='success']",
-                "[class*='confirm']",
-                "//div[contains(text(), 'success') or contains(text(), 'confirmed')]",
-                "//div[contains(text(), 'booked') or contains(text(), 'reserved')]",
-                "//span[contains(text(), 'Thank you')]"
-            ]
-            
-            for indicator in success_indicators:
-                try:
-                    if indicator.startswith("//"):
-                        element = self.driver.find_element(By.XPATH, indicator)
-                    else:
-                        element = self.driver.find_element(By.CSS_SELECTOR, indicator)
-                    
-                    if element.is_displayed():
-                        success_text = element.text
-                        self.logger.info(f"Booking success confirmed: {success_text}")
-                        return True
-                except NoSuchElementException:
-                    continue
-            
-            # Alternative: check URL change
-            current_url = self.driver.current_url
-            if any(keyword in current_url.lower() for keyword in ['success', 'confirm', 'booked', 'complete']):
-                self.logger.info(f"Booking success detected via URL: {current_url}")
-                return True
-            
-            # Alternative: check page content for success keywords
+            # Look for success indicators
+            success_keywords = ['success', 'confirmed', 'booked', 'thank you']
             page_text = self.driver.page_source.lower()
-            success_keywords = [
-                'tee time has been booked',
-                'reservation confirmed',
-                'booking successful',
-                'thank you for your reservation'
-            ]
             
             for keyword in success_keywords:
                 if keyword in page_text:
-                    self.logger.info(f"Booking success detected via page content: {keyword}")
+                    self.logger.info(f"✅ Booking success detected: '{keyword}' found in page")
                     return True
             
-            self.logger.warning("No clear booking success indicators found")
+            self.logger.warning("❌ No success indicators found")
             return False
-            
         except Exception as e:
             self.logger.error(f"Error verifying booking: {e}")
             return False
-
-    def run_booking_attempt(self, preferred_times=None):
-        """Main method to run the complete booking process"""
-        try:
-            # Setup driver
-            if not self.setup_driver(headless=os.getenv('HEADLESS_BROWSER', 'true').lower() == 'true'):
-                return False
-            
-            # Login
-            if not self.login():
-                return False
-            
-            # Navigate to tee times
-            if not self.navigate_to_tee_times():
-                return False
-            
-            # Get target date (7 days from now)
-            target_date = self.get_target_date(7)
-            
-            # Find available times
-            available_times = self.find_available_times(target_date)
-            if not available_times:
-                self.logger.warning("No available tee times found")
-                return False
-            
-            # Book preferred time or first available
-            if preferred_times:
-                for pref_time in preferred_times:
-                    for slot in available_times:
-                        if pref_time in slot['time']:
-                            return self.book_tee_time(slot)
-            
-            # Book first available time if no preference matched
-            return self.book_tee_time(available_times[0])
-            
-        except Exception as e:
-            self.logger.error(f"Booking attempt failed: {e}")
-            return False
-        finally:
-            if self.driver:
-                self.driver.quit()
 
     def cleanup(self):
         """Clean up resources"""
         if self.driver:
             self.driver.quit()
 
-# Test function
-def test_scraper():
-    """Test the scraper with current configuration"""
-    scraper = JeremyRanchScraper()
-    
-    try:
-        # Test with visible browser for debugging
-        if scraper.setup_driver(headless=False):
-            print("✅ Driver setup successful!")
-            scraper.debug_current_page("Initial")
+    def book_tee_time(self, target_date, preferred_time, test_mode=True):
+        """Main booking method"""
+        try:
+            self.logger.info(f"🎯 Starting booking for {target_date.strftime('%Y-%m-%d')} at {preferred_time}")
             
-            if scraper.login():
-                print("✅ Login successful!")
-                scraper.debug_current_page("After Login")
-                scraper.save_page_source("after_login")
-                
-                # Try to navigate to tee times
-                if scraper.navigate_to_tee_times():
-                    print("✅ Navigation to tee times successful!")
-                    scraper.debug_current_page("Tee Time Booking Page")
-                    scraper.save_page_source("tee_time_booking")
-                    
-                    # Keep browser open for manual inspection
-                    print("\n🔍 Browser will stay open for 30 seconds for manual inspection...")
-                    print("Check the VNC viewer at http://localhost:7900 (password: secret)")
-                    time.sleep(30)
-                else:
-                    print("❌ Could not find tee time navigation")
-                    scraper.debug_current_page("Navigation Failed")
-                    scraper.save_page_source("navigation_failed")
+            # Setup and login
+            if not self.setup_driver(headless=os.getenv('HEADLESS_BROWSER', 'true').lower() == 'true'):
+                return False
+            
+            if not self.login():
+                return False
+            
+            if not self.navigate_to_booking():
+                return False
+            
+            if not self.set_date_and_refresh(target_date):
+                return False
+            
+            # Find available times
+            available_times = self.get_available_times()
+            if not available_times:
+                self.logger.warning("❌ No available times found")
+                return False
+            
+            # Find best time and attempt booking
+            best_slot = self.find_best_time(available_times, preferred_time)
+            if best_slot:
+                return self.attempt_booking(best_slot, test_mode)
             else:
-                print("❌ Login failed")
-                scraper.debug_current_page("Login Failed")
-                scraper.save_page_source("login_failed")
-        else:
-            print("❌ Driver setup failed")
-    except Exception as e:
-        print(f"❌ Test failed with error: {e}")
-    finally:
-        scraper.cleanup()
+                self.logger.error("❌ No suitable time slot found")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Booking failed: {e}")
+            return False
+        finally:
+            self.cleanup()
 
-def test_full_booking_flow():
-    """Test the complete booking flow"""
-    scraper = JeremyRanchScraper()
-    
-    try:
-        # Setup with visible browser for debugging
-        if scraper.setup_driver(headless=False):
-            print("✅ Driver setup successful!")
-            
-            if scraper.login():
-                print("✅ Login successful!")
-                scraper.debug_current_page("After Login")
-                
-                # Navigate to tee time booking
-                if scraper.navigate_to_tee_times():
-                    print("✅ Navigation to tee times successful!")
-                    scraper.debug_current_page("Tee Time Booking Page")
-                    scraper.save_page_source("tee_time_booking")
-                    
-                    # Test finding available times (7 days from now)
-                    target_date = scraper.get_target_date(7)
-                    print(f"🎯 Looking for tee times on: {target_date.strftime('%m/%d/%Y')}")
-                    
-                    available_times = scraper.find_available_times(target_date)
-                    if available_times:
-                        print(f"✅ Found {len(available_times)} available time slots!")
-                        
-                        # Show available times
-                        for i, slot in enumerate(available_times[:5]):  # Show first 5
-                            print(f"   {i+1}. {slot['time']} (ID: {slot['slot_id']})")
-                        
-                        # Optionally test booking (be careful!)
-                        # Uncomment the next line to test actual booking
-                        # NOTE: This will make a real reservation!
-                        
-                        # if input("Test actual booking? (y/N): ").lower() == 'y':
-                        #     first_time = available_times[0]
-                        #     print(f"🚀 Attempting to book: {first_time['time']}")
-                        #     success = scraper.book_tee_time(first_time)
-                        #     if success:
-                        #         print("✅ Booking successful!")
-                        #     else:
-                        #         print("❌ Booking failed")
-                        
-                        print("\n🔍 Browser staying open for manual inspection...")
-                        print("Check VNC viewer at http://localhost:7900")
-                        time.sleep(60)  # Keep open longer for inspection
-                        
-                    else:
-                        print("❌ No available times found")
-                        print("This might be normal if booking is full or not yet open")
-                        scraper.debug_current_page("No Available Times")
-                        print("\n🔍 Browser staying open for inspection...")
-                        time.sleep(30)
-                else:
-                    print("❌ Could not navigate to tee time booking")
-                    scraper.debug_current_page("Navigation Failed")
-            else:
-                print("❌ Login failed")
-        else:
-            print("❌ Driver setup failed")
-    finally:
-        scraper.cleanup()
 
-def test_refresh_times_button():
-    """Test specifically the RefreshTimes() button functionality"""
-    scraper = JeremyRanchScraper()
+def test_booking(date_str="2025-07-22", preferred_time="14:45"):
+    """Test the booking process"""
+    print(f"🧪 Testing booking for {date_str} at {preferred_time}")
     
-    try:
-        if scraper.setup_driver(headless=False):
-            print("✅ Driver setup successful!")
-            
-            if scraper.login() and scraper.navigate_to_tee_times():
-                print("✅ Reached tee time booking page!")
-                
-                # Get current date display
-                try:
-                    current_date_header = scraper.driver.find_element(By.CSS_SELECTOR, ".date").text
-                    print(f"📅 Current date header: {current_date_header}")
-                except:
-                    print("📅 Could not find date header")
-                
-                # Test date selection with RefreshTimes()
-                target_date = scraper.get_target_date(6)
-                target_date_str = target_date.strftime('%m/%d/%Y')
-                print(f"🎯 Setting date to: {target_date_str}")
-                
-                try:
-                    # Find and set date
-                    date_input = scraper.driver.find_element(By.ID, "txtDate")
-                    current_value = date_input.get_attribute('value')
-                    print(f"📅 Current date input value: {current_value}")
-                    
-                    date_input.clear()
-                    date_input.send_keys(target_date_str)
-                    new_value = date_input.get_attribute('value')
-                    print(f"📅 New date input value: {new_value}")
-                    
-                    # Find the RefreshTimes() button
-                    print("🔍 Looking for RefreshTimes() button...")
-                    try:
-                        refresh_button = scraper.driver.find_element(By.XPATH, "//a[@onclick='RefreshTimes();']")
-                        print("✅ Found RefreshTimes() button!")
-                        
-                        # Get button info
-                        button_html = refresh_button.get_attribute('outerHTML')
-                        print(f"🔗 Button HTML: {button_html[:200]}...")
-                        
-                        # Take screenshot before clicking
-                        scraper.driver.save_screenshot("/tmp/before_refresh.png")
-                        print("📸 Screenshot saved: before_refresh.png")
-                        
-                        # Click the button
-                        scraper.driver.execute_script("arguments[0].click();", refresh_button)
-                        print("🖱️ RefreshTimes() button clicked!")
-                        
-                        # Wait for update
-                        print("⏳ Waiting 8 seconds for update...")
-                        time.sleep(8)
-                        
-                        # Take screenshot after clicking
-                        scraper.driver.save_screenshot("/tmp/after_refresh.png")
-                        print("📸 Screenshot saved: after_refresh.png")
-                        
-                        # Check new date header
-                        try:
-                            new_date_header = scraper.driver.find_element(By.CSS_SELECTOR, ".date").text
-                            print(f"📅 New date header: {new_date_header}")
-                            
-                            if target_date.strftime('%A, %B') in new_date_header:
-                                print("✅ Date header updated successfully!")
-                            else:
-                                print("❌ Date header did not update as expected")
-                        except:
-                            print("❌ Could not find date header after update")
-                        
-                        # Check for time slots
-                        available_slots = scraper.driver.find_elements(By.CSS_SELECTOR, ".openTee")
-                        all_time_slots = scraper.driver.find_elements(By.CSS_SELECTOR, "div[id$='AM1_'], div[id$='PM1_']")
-                        
-                        print(f"📊 Time slots after update:")
-                        print(f"   Available slots (.openTee): {len(available_slots)}")
-                        print(f"   Total time containers: {len(all_time_slots)}")
-                        
-                        if available_slots:
-                            print("🕐 Some available times:")
-                            for i, slot in enumerate(available_slots[:3]):
-                                try:
-                                    time_elem = slot.find_element(By.XPATH, 
-                                        "./ancestor::div[contains(@class, 'tsSection')]//span[@class='timeText']")
-                                    print(f"   {i+1}. {time_elem.text}")
-                                except:
-                                    print(f"   {i+1}. [Could not extract time]")
-                        
-                    except Exception as e:
-                        print(f"❌ RefreshTimes() button not found: {e}")
-                        
-                        # Try direct JavaScript call
-                        print("🔄 Trying direct RefreshTimes() call...")
-                        try:
-                            scraper.driver.execute_script("RefreshTimes();")
-                            print("✅ Called RefreshTimes() directly")
-                            time.sleep(5)
-                            
-                            # Check results
-                            new_date_header = scraper.driver.find_element(By.CSS_SELECTOR, ".date").text
-                            print(f"📅 Date header after direct call: {new_date_header}")
-                            
-                        except Exception as js_error:
-                            print(f"❌ Direct RefreshTimes() call failed: {js_error}")
-                    
-                    print("\n🔍 Browser staying open for inspection...")
-                    print("Check VNC viewer at http://localhost:7900")
-                    print("Screenshots: /tmp/before_refresh.png and /tmp/after_refresh.png")
-                    time.sleep(60)
-                    
-                except Exception as e:
-                    print(f"❌ Test failed: {e}")
-                    
-    finally:
-        scraper.cleanup()
+    scraper = JeremyRanchScraper()
+    target_date = datetime.strptime(date_str, '%Y-%m-%d')
+    
+    # Test in non-headless mode for debugging
+    os.environ['HEADLESS_BROWSER'] = 'false'
+    
+    success = scraper.book_tee_time(target_date, preferred_time, test_mode=True)
+    
+    if success:
+        print("🎉 TEST PASSED: Ready for real booking!")
+    else:
+        print("❌ TEST FAILED: Check logs for issues")
+    
+    return success
 
-def test_date_selection_only():
-    """Test just the date selection functionality"""
-    scraper = JeremyRanchScraper()
-    
-    try:
-        if scraper.setup_driver(headless=False):
-            print("✅ Driver setup successful!")
-            
-            if scraper.login() and scraper.navigate_to_tee_times():
-                print("✅ Reached tee time booking page!")
-                
-                # Test date selection
-                target_date = scraper.get_target_date(7)
-                print(f"🎯 Testing date selection for: {target_date.strftime('%m/%d/%Y')}")
-                
-                try:
-                    # Try to set the date
-                    date_input = scraper.driver.find_element(By.ID, "txtDate")
-                    current_date = date_input.get_attribute('value')
-                    print(f"Current date value: {current_date}")
-                    
-                    date_input.clear()
-                    target_date_str = target_date.strftime('%m/%d/%Y')
-                    date_input.send_keys(target_date_str)
-                    print(f"Set date to: {target_date_str}")
-                    
-                    # Trigger the update
-                    scraper.driver.execute_script("updatePersistDate(document.getElementById('txtDate'))")
-                    print("✅ Triggered date update script")
-                    
-                    time.sleep(5)  # Wait for update
-                    
-                    # Check for time slots
-                    time_containers = scraper.driver.find_elements(By.CSS_SELECTOR, "div[id$='AM1_'], div[id$='PM1_']")
-                    available_slots = scraper.driver.find_elements(By.CSS_SELECTOR, ".openTee")
-                    
-                    print(f"Time containers found: {len(time_containers)}")
-                    print(f"Available slots found: {len(available_slots)}")
-                    
-                    print("\n🔍 Browser staying open for inspection...")
-                    time.sleep(45)
-                    
-                except Exception as e:
-                    print(f"❌ Date selection test failed: {e}")
-                    
-    finally:
-        scraper.cleanup()
 
 if __name__ == "__main__":
-    test_scraper()
+    test_booking("2025-07-22", "14:45")
