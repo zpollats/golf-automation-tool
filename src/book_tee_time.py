@@ -1,6 +1,6 @@
 import sys
 import os
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, time, timedelta, timezone
 import pytz
 
 # Add the src directory to Python path
@@ -31,7 +31,9 @@ def main():
             return
         
         # Validate date is in future
-        today = date.today()
+        utc_now = datetime.now(timezone.utc)
+        local_now = utc_now - timedelta(hours=6)
+        today = local_now.date()
         if requested_date <= today:
             print("❌ Date must be in the future")
             return
@@ -73,12 +75,10 @@ def main():
             execution_time_display = "ASAP (within 5 minutes)"
         else:
             # Calculate execution time for future bookings
-            mtn_tz = pytz.timezone('MST')
             execution_date = requested_date - timedelta(days=7)
-            execution_datetime_naive = datetime.combine(execution_date, time(23, 59, 50))
-            execution_datetime_mtn = mtn_tz.localize(execution_datetime_naive)
-            execution_datetime_utc = execution_datetime_mtn.astimezone(pytz.UTC).replace(tzinfo=None)
-            execution_time_display = execution_datetime_mtn.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')
+            execution_datetime_naive = datetime.combine(execution_date, time(5, 59, 45))
+            execution_datetime_utc = execution_datetime_naive.astimezone(pytz.UTC).replace(tzinfo=None)
+            execution_time_display = execution_datetime_naive.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')
         
         print(f"   Will execute: {execution_time_display}")
         

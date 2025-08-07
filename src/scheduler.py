@@ -26,8 +26,12 @@ celery.conf.update(
     beat_schedule={
         'check-pending-bookings': {
             'task': 'src.scheduler.check_pending_bookings',
-            'schedule': crontab(minute='*/5'),  # Check every 5 minutes
+            'schedule': crontab(minute='*/10'),  # Check every 10 minutes
         },
+        'start-precision-booking': {
+            'task': 'src.scheduler.start_precision_booking',
+            'schedule': crontab(minute=59, hour=5),  
+        }
     },
 )
 
@@ -57,7 +61,7 @@ def book_tee_time_task(self, booking_request_id: int):
         scraper = JeremyRanchScraper()
         
         # Attempt booking - use test_mode=True for testing, False for real booking
-        test_mode = True  # Change to False when ready for real bookings
+        test_mode = False  # Change to False when ready for real bookings
         
         success = scraper.book_tee_time(
             target_date=booking_request.requested_date,
@@ -117,6 +121,66 @@ def check_pending_bookings():
         book_tee_time_task.delay(booking.id)
     
     return f"Scheduled {len(pending_bookings)} booking tasks"
+
+@celery.task
+def start_precision_booking():
+    """Enable precision booking for the next 3 minutes"""
+    import redis
+    logger = logging.getLogger(__name__)
+
+    try:
+        redis_client = redis.from_url(settings.redis_url)
+        redis_client.setex('precision_booking_enabled', 120, 'true')
+        logger.info("STARTING PRECISION BOOKING WINDOW (2 minutes)")
+
+        precision_booking_check.delay()
+
+        return "Precision booking enabled for 2 minutes"
+
+    except Exception as e:
+        logger.error(f"Error starting precision booking: {str(e)}")
+        return f"Error starting precision booking: {str(e)}"
+
+@celery.task
+def precision_booking_check():
+    """High-precision check during booking windows"""
+    import redis
+    from .models import get_pending_bookings
+    import pytz
+
+    logger = logging.getLogger(__name__)
+    
+    try:
+        redis_client = redis.from_url(settings.redis_url)
+        precision_enabled = redis_client.get('precision_booking_enabled')
+
+        if not precision_enabled:
+            logger.info("Precision booking window expired - stopping checks")
+            return "Precision booking disabled (timeout expired)"
+        
+        mtn_tz = pytz.timezone('MST')
+        current_mtn = datetime.now(mtn_tz)
+        current_utc = current_mtn.astimezone(pytz.UTC).replace(tzinfo=None)
+
+        logger.info(f"🔍 Checking for pending bookings at {current_mtn.strftime('%H:%M:%S')} MST")
+
+        pending_bookings = get_pending_bookings(current_utc)
+        executed_count = 0
+
+        for booking in pending_bookings:
+            time_until_execution = (booking.scheduled_for - current_utc).total_seconds()
+            if time_until_execution <= 10:
+                logger.info(f"EXECUTING NOW: {booking.user_name} - {booking.requested_date}")
+                book_tee_time_task.delay(booking.id)
+                executed_count += 1
+
+        precision_booking_check.apply_async(countdown=3)
+
+        return f"Precision check: {executed_count}/{len(pending_bookings)} bookings executed"
+    
+    except Exception as e:
+        logger.error(f"Precision booking check error - {str(e)}")
+        return f"Precision booking check error: {str(e)}"
 
 @celery.task
 def schedule_booking(user_name: str, requested_date: str, requested_time: str):
