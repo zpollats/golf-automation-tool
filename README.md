@@ -195,7 +195,7 @@ docker-compose --env-file .env.user1 up -d
 
 ## License
 
-MIT License - see LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.s
 
 ## Contributing
 
